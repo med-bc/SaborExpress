@@ -32,8 +32,18 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Check source images
+        run: |
+          echo "Contenido de public:"
+          find public -type f
+
       - name: Build project
         run: npm run build
+
+      - name: Verify build output
+        run: |
+          echo "Contenido de dist:"
+          find dist -type f
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
