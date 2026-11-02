@@ -1692,7 +1692,9 @@ function MenuScreen({
           {shown.map((product) => (
             <article className="product-card" key={product.id}>
               <div className="product-image">
-                <img src={localProductImage(product.image)} alt={product.name} />
+                <img src={`${import.meta.env.BASE_URL}images/pizza-brasa.jpg`}
+                  alt="Prueba de pizza"
+                  style={{ width: "300px", height: "200px", objectFit: "cover" }}/>
                 {product.popular && <span className="popular">Favorito</span>}
               </div>
               <div className="product-info">
