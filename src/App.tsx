@@ -3514,7 +3514,12 @@ function ManageScreen({
   const submit = (event: FormEvent) => {
     event.preventDefault()
 
-    if (!form.name.trim() || !form.description.trim() || form.price <= 0) {
+    if (
+      !form.name.trim() ||
+      !form.description.trim() ||
+      !Number.isFinite(form.price) ||
+      form.price <= 0
+    ) {
       setError("Completa el nombre, la descripción y un precio mayor a 0.")
       return
     }
@@ -3634,7 +3639,7 @@ function ManageScreen({
                 label="Precio (S/)"
                 type="number"
                 min="0.01"
-                step="0.10"
+                step="0.01"
                 value={form.price || ""}
                 onChange={(e) =>
                   setForm({ ...form, price: Number(e.target.value) })
