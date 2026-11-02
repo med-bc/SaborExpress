@@ -1,10 +1,15 @@
 import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react"
 
-type Role = "client" | "admin" | "ops"
+type Role = "client" | "admin" | "ops" | "delivery"
 
-type View = "auth" | "menu" | "cart" | "checkout" | "orders" | "account" | "admin" | "ops" | "manage"
+type View = "auth" | "menu" | "cart" | "checkout" | "orders" | "account" | "admin" | "ops" | "delivery" | "manage" | "categories" | "payments"
 
-type OrderStatus = "Pendiente" | "Preparando" | "En camino" | "Entregado"
+type OrderStatus =
+  | "Pendiente"
+  | "Preparando"
+  | "Listo para delivery"
+  | "En camino"
+  | "Entregado"
 
 type Product = {
   id: number
@@ -41,6 +46,8 @@ type Order = {
 
   customer: string
 
+  phone?: string
+
   email: string
 
   address: string
@@ -54,6 +61,10 @@ type Order = {
   notes: string
 
   payment: string
+
+  paymentReference?: string
+
+  paymentDeadline?: string
 
   status: OrderStatus
 
@@ -85,6 +96,14 @@ const DISTRICT_FEES: Record<string, number> = {
 const STATUSES: OrderStatus[] = [
   "Pendiente",
   "Preparando",
+  "Listo para delivery",
+  "En camino",
+  "Entregado",
+]
+
+const CUSTOMER_STATUSES: OrderStatus[] = [
+  "Pendiente",
+  "Preparando",
   "En camino",
   "Entregado",
 ]
@@ -97,6 +116,35 @@ const categories = [
   "Entradas",
   "Bebidas",
 ]
+
+const initialPaymentMethods = [
+  "Yape",
+  "Plin",
+  "Tarjeta de Debito o Credito",
+  "deposito en efectivo",
+]
+
+const normalizePaymentMethod = (method: string) => {
+  if (
+    method === "Efectivo" ||
+    method === "Transferencia o deposito en efectivo"
+  ) {
+    return "deposito en efectivo"
+  }
+  if (method === "Tarjeta al recibir") {
+    return "Tarjeta de Debito o Credito"
+  }
+  return method
+}
+
+const demoClient: User = {
+  name: "Cliente Demo",
+  email: "cliente@saborexpress.pe",
+  phone: "999 888 777",
+  password: "cliente123",
+  address: "Av. Grau 520, Barranco",
+  addresses: ["Av. Grau 520, Barranco"],
+}
 
 const initialProducts: Product[] = [
   {
@@ -386,6 +434,46 @@ const shortDate = (value: string) =>
     new Date(value),
   )
 
+const paymentDeadline = (value: string) =>
+  new Intl.DateTimeFormat("es-PE", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value))
+
+const isToday = (value: string) => {
+  const date = new Date(value)
+  const today = new Date()
+
+  return (
+    date.getFullYear() === today.getFullYear() &&
+    date.getMonth() === today.getMonth() &&
+    date.getDate() === today.getDate()
+  )
+}
+
+const localDateKey = (date = new Date()) => {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, "0")
+  const day = String(date.getDate()).padStart(2, "0")
+  return `${year}-${month}-${day}`
+}
+
+const matchesDate = (value: string, dateKey: string) => {
+  const date = new Date(value)
+  return localDateKey(date) === dateKey
+}
+
+const hashPassword = async (value: string) => {
+  const data = new TextEncoder().encode(value)
+  const digest = await crypto.subtle.digest("SHA-256", data)
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("")
+}
+
 function Icon({ name, size = 20 }: { name: string; size?: number }) {
   const paths: Record<string, ReactNode> = {
     menu: (
@@ -412,6 +500,12 @@ function Icon({ name, size = 20 }: { name: string; size?: number }) {
       <>
         <circle cx="12" cy="8" r="4" />
         <path d="M4 21c.7-4.2 3.4-6 8-6s7.3 1.8 8 6" />
+      </>
+    ),
+
+    phone: (
+      <>
+        <path d="M6.5 3.5h3l1.5 4-2 1.5c1 2.2 2.8 4 5 5l1.5-2 4 1.5v3c0 1.1-.9 2-2 2C10.6 18.5 5.5 13.4 5.5 6.5c0-1.7.4-3 1-3z" />
       </>
     ),
 
@@ -666,17 +760,26 @@ function AuthScreen({
   onLogin,
 
   onRegister,
-}: {
-  onLogin: (email: string, password: string) => string | null
 
-  onRegister: (user: User) => string | null
+  onRecover,
+}: {
+  onLogin: (email: string, password: string) => Promise<string | null>
+
+  onRegister: (user: User) => Promise<string | null>
+
+  onRecover: (email: string, password: string) => Promise<string | null>
 }) {
   const [tab, setTab] = useState<"login" | "register">("login")
 
   const [error, setError] = useState("")
+  const [success, setSuccess] = useState("")
+  const [recoveryOpen, setRecoveryOpen] = useState(false)
+  const [recoveryEmail, setRecoveryEmail] = useState("")
+  const [recoveryPassword, setRecoveryPassword] = useState("")
 
   const [form, setForm] = useState({
     name: "",
+    lastName: "",
     email: "",
     phone: "",
     address: "",
@@ -684,10 +787,11 @@ function AuthScreen({
     confirm: "",
   })
 
-  const submit = (event: FormEvent) => {
+  const submit = async (event: FormEvent) => {
     event.preventDefault()
 
     setError("")
+    setSuccess("")
 
     if (!form.email.includes("@") || form.password.length < 6) {
       setError(
@@ -698,8 +802,13 @@ function AuthScreen({
     }
 
     if (tab === "register") {
-      if (!form.name.trim() || !form.phone.trim() || !form.address.trim()) {
-        setError("Completa todos los datos para crear tu cuenta.")
+      if (
+        !form.name.trim() ||
+        !form.lastName.trim() ||
+        !form.phone.trim() ||
+        !form.address.trim()
+      ) {
+        setError("Campos obligatorios incompletos.")
 
         return
       }
@@ -710,8 +819,8 @@ function AuthScreen({
         return
       }
 
-      const result = onRegister({
-        name: form.name.trim(),
+      const result = await onRegister({
+        name: `${form.name.trim()} ${form.lastName.trim()}`,
 
         email: form.email.toLowerCase().trim(),
 
@@ -722,12 +831,29 @@ function AuthScreen({
         password: form.password,
       })
 
-      if (result) setError(result)
+      if (result) {
+        setError(result)
+      } else {
+        setTab("login")
+        setSuccess("Registro exitoso. Inicia sesión para continuar.")
+      }
     } else {
-      const result = onLogin(form.email.toLowerCase().trim(), form.password)
+      const result = await onLogin(form.email.toLowerCase().trim(), form.password)
 
       if (result) setError(result)
     }
+  }
+
+  const recover = async (event: FormEvent) => {
+    event.preventDefault()
+    setError("")
+    const result = await onRecover(recoveryEmail.trim().toLowerCase(), recoveryPassword)
+    if (result) {
+      setError(result)
+      return
+    }
+    setRecoveryOpen(false)
+    setSuccess("Contraseña actualizada. Ya puedes iniciar sesión.")
   }
 
   return (
@@ -782,16 +908,27 @@ function AuthScreen({
           </div>
           <form onSubmit={submit} className="auth-form">
             {tab === "register" && (
-              <Field
-                label="Nombre completo"
-                placeholder="Ej. Valeria Torres"
-                value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
-              />
+              <div className="form-grid">
+                <Field
+                  label="Nombre"
+                  required
+                  placeholder="Ej. Valeria"
+                  value={form.name}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                />
+                <Field
+                  label="Apellido"
+                  required
+                  placeholder="Ej. Torres"
+                  value={form.lastName}
+                  onChange={(e) => setForm({ ...form, lastName: e.target.value })}
+                />
+              </div>
             )}
             <Field
               label="Correo electrónico"
               type="email"
+              required
               placeholder="tu@correo.com"
               value={form.email}
               onChange={(e) => setForm({ ...form, email: e.target.value })}
@@ -800,12 +937,14 @@ function AuthScreen({
               <div className="form-grid">
                 <Field
                   label="Teléfono"
+                  required
                   placeholder="999 999 999"
                   value={form.phone}
                   onChange={(e) => setForm({ ...form, phone: e.target.value })}
                 />
                 <Field
                   label="Dirección"
+                  required
                   placeholder="Calle, número, distrito"
                   value={form.address}
                   onChange={(e) =>
@@ -817,6 +956,8 @@ function AuthScreen({
             <Field
               label="Contraseña"
               type="password"
+              required
+              minLength={6}
               placeholder="Mínimo 6 caracteres"
               value={form.password}
               onChange={(e) => setForm({ ...form, password: e.target.value })}
@@ -825,6 +966,7 @@ function AuthScreen({
               <Field
                 label="Confirmar contraseña"
                 type="password"
+                required
                 placeholder="Repite tu contraseña"
                 value={form.confirm}
                 onChange={(e) => setForm({ ...form, confirm: e.target.value })}
@@ -836,23 +978,50 @@ function AuthScreen({
                 <span>{error}</span>
               </div>
             )}
+            {success && <div className="alert alert-success"><Icon name="check" size={18} /><span>{success}</span></div>}
             <Button type="submit" className="btn-full">
               {tab === "login" ? "Ingresar" : "Crear cuenta"}
             </Button>
+            {tab === "login" && (
+              <button type="button" className="btn btn-ghost btn-full" onClick={() => { setRecoveryOpen(true); setError("") }}>
+                ¿Olvidaste tu contraseña?
+              </button>
+            )}
           </form>
           <div className="demo-note">
             <Icon name="info" size={18} />
             <div>
               <strong>Accesos demo</strong>
               <p>
+                Cliente: cliente@saborexpress.pe / cliente123
+                <br />
                 Admin: admin@saborexpress.pe / admin123
                 <br />
                 Operativo: cocina@saborexpress.pe / cocina123
+                <br />
+                Delivery: delivery@saborexpress.pe / delivery123
               </p>
             </div>
           </div>
         </div>
       </section>
+      {recoveryOpen && (
+        <div className="modal-backdrop">
+          <form className="modal" onSubmit={recover}>
+            <div className="modal-head">
+              <div>
+                <p className="eyebrow">Recuperación</p>
+                <h2>Restablece tu contraseña</h2>
+              </div>
+              <button type="button" className="icon-btn" onClick={() => setRecoveryOpen(false)}><Icon name="close" /></button>
+            </div>
+            <Field label="Correo electrónico" type="email" required value={recoveryEmail} onChange={(event) => setRecoveryEmail(event.target.value)} />
+            <Field label="Nueva contraseña" type="password" required minLength={6} value={recoveryPassword} onChange={(event) => setRecoveryPassword(event.target.value)} />
+            {error && <div className="alert alert-error"><Icon name="info" size={18} /><span>{error}</span></div>}
+            <Button type="submit" className="btn-full">Actualizar contraseña</Button>
+          </form>
+        </div>
+      )}
     </main>
   )
 }
@@ -862,7 +1031,7 @@ function AccountScreen({
   onSave,
 }: {
   user: User
-  onSave: (user: User) => string | null
+  onSave: (user: User) => Promise<string | null>
 }) {
   const initialAddresses = user.addresses?.length
     ? user.addresses
@@ -917,7 +1086,7 @@ function AccountScreen({
     setAddressModalOpen(false)
   }
 
-  const submit = (event: FormEvent) => {
+  const submit = async (event: FormEvent) => {
     event.preventDefault()
 
     setError("")
@@ -943,17 +1112,24 @@ function AccountScreen({
       return
     }
 
-    if (
-      form.newPassword &&
-      (form.currentPassword !== user.password ||
+    if (form.newPassword) {
+      const currentPasswordHash = await hashPassword(form.currentPassword)
+      if (
+        (user.password.length === 64
+          ? currentPasswordHash !== user.password
+          : form.currentPassword !== user.password) ||
         form.newPassword.length < 6 ||
-        form.newPassword !== form.confirmPassword)
-    ) {
-      setError(
-        "Verifica tu contraseña actual y confirma una nueva contraseña de al menos 6 caracteres.",
-      )
-
-      return
+        form.newPassword !== form.confirmPassword
+      ) {
+        setError(
+          (user.password.length === 64
+            ? currentPasswordHash !== user.password
+            : form.currentPassword !== user.password)
+            ? "La contraseña actual es incorrecta"
+            : "La nueva contraseña debe tener al menos 6 caracteres y coincidir.",
+        )
+        return
+      }
     }
 
     const primaryAddress =
@@ -961,7 +1137,7 @@ function AccountScreen({
 
     const primaryAddressIndex = Math.max(0, addresses.indexOf(primaryAddress))
 
-    const result = onSave({
+    const result = await onSave({
       ...user,
       email: form.email.trim().toLowerCase(),
       phone: form.phone.trim(),
@@ -1215,8 +1391,9 @@ function Shell({
 
   const adminLinks = [
     { view: "admin" as View, label: "Resumen", icon: "grid" },
-
     { view: "manage" as View, label: "Gestión de menú", icon: "utensils" },
+    { view: "categories" as View, label: "Categorías", icon: "grid" },
+    { view: "payments" as View, label: "Métodos de pago", icon: "cart" },
   ]
 
   const links =
@@ -1224,7 +1401,13 @@ function Shell({
       ? clientLinks
       : role === "admin"
         ? adminLinks
-        : [{ view: "ops" as View, label: "Pedidos activos", icon: "orders" }]
+        : [
+            {
+              view: role === "delivery" ? ("delivery" as View) : ("ops" as View),
+              label: role === "delivery" ? "Delivery" : "Cocina",
+              icon: "orders",
+            },
+          ]
 
   const go = (target: View) => {
     onNavigate(target)
@@ -1244,7 +1427,15 @@ function Shell({
         <button
           className="logo-button"
           onClick={() =>
-            go(role === "client" ? "menu" : role === "admin" ? "admin" : "ops")
+            go(
+              role === "client"
+                ? "menu"
+                : role === "admin"
+                  ? "admin"
+                  : role === "delivery"
+                    ? "delivery"
+                    : "ops",
+            )
           }
         >
           <Logo />
@@ -1282,7 +1473,9 @@ function Shell({
                   ? "Cliente"
                   : role === "admin"
                     ? "Administrador"
-                    : "Operativo"}
+                    : role === "delivery"
+                      ? "Delivery"
+                      : "Cocina"}
               </small>
             </div>
           </div>
@@ -1316,7 +1509,9 @@ function Shell({
                 ? "Cliente"
                 : role === "admin"
                   ? "Administrador"
-                  : "Personal operativo"}
+                  : role === "delivery"
+                    ? "Personal de delivery"
+                    : "Personal de cocina"}
             </small>
           </span>
         </div>
@@ -1399,24 +1594,31 @@ function Quantity({
 
 function MenuScreen({
   products,
-
   cart,
-
   onQuantity,
+  categories,
+  hiddenCategories,
 }: {
   products: Product[]
-
   cart: CartItem[]
-
   onQuantity: (id: number, value: number) => void
+  categories: string[]
+  hiddenCategories: string[]
 }) {
   const [category, setCategory] = useState("Todos")
 
   const [query, setQuery] = useState("")
+  const availableCategories = categories.filter(
+    (item) =>
+      item === "Todos" ||
+      (!hiddenCategories.includes(item) &&
+        products.some((product) => product.active && product.category === item)),
+  )
 
   const shown = products.filter(
     (product) =>
       product.active &&
+      !hiddenCategories.includes(product.category) &&
       (category === "Todos" || product.category === category) &&
       product.name.toLowerCase().includes(query.toLowerCase()),
   )
@@ -1441,7 +1643,7 @@ function MenuScreen({
       </section>
       <div className="menu-toolbar">
         <div className="category-scroll">
-          {categories.map((item) => (
+          {availableCategories.map((item) => (
             <button
               key={item}
               className={category === item ? "category active" : "category"}
@@ -1504,8 +1706,12 @@ function MenuScreen({
       ) : (
         <EmptyState
           icon="search"
-          title="No encontramos resultados"
-          text="Prueba con otra palabra o selecciona una categoría distinta."
+          title="Aún no hay productos en esta categoría"
+          text={
+            query
+              ? "Prueba con otra palabra o selecciona una categoría distinta."
+              : "Prueba con otra categoría más tarde."
+          }
         />
       )}
     </main>
@@ -1562,15 +1768,6 @@ function CartScreen({
           items.length
             ? `${selectedCount} productos seleccionados para pedir`
             : "Todavía no agregaste productos"
-        }
-        action={
-          <Button
-            variant="ghost"
-            icon="back"
-            onClick={() => onNavigate("menu")}
-          >
-            Seguir comprando
-          </Button>
         }
       />
       {!items.length ? (
@@ -1647,14 +1844,13 @@ function CartScreen({
               <span>Subtotal</span>
               <strong>{money(subtotal)}</strong>
             </div>
-            <div className="summary-divider" />
             <div className="summary-total">
-              <span>Subtotal</span>
+              <span>Total a pagar</span>
               <strong>{money(subtotal)}</strong>
             </div>
             <p>
-              <Icon name="pin" size={16} />
-              El envío se calcula según tu distrito en el checkout.
+              <Icon name="info" size={16} />
+              El costo de envío se calcula al confirmar el pedido.
             </p>
             <Button
               className="btn-full"
@@ -1662,6 +1858,13 @@ function CartScreen({
               onClick={() => onNavigate("checkout")}
             >
               Continuar al checkout <Icon name="arrow" size={18} />
+            </Button>
+            <Button
+              className="btn-full btn-green"
+              icon="back"
+              onClick={() => onNavigate("menu")}
+            >
+              Regresar al menú
             </Button>
           </aside>
         </div>
@@ -1682,6 +1885,8 @@ function CheckoutScreen({
   onConfirm,
 
   onSaveAddresses,
+  paymentMethods,
+  hiddenPaymentMethods,
 }: {
   user: User
 
@@ -1697,9 +1902,13 @@ function CheckoutScreen({
     deliveryFee: number,
     payment: string,
     notes: string,
+    paymentReference?: string,
+    paymentDeadline?: string,
   ) => void
 
   onSaveAddresses: (addresses: string[]) => void
+  paymentMethods: string[]
+  hiddenPaymentMethods: string[]
 }) {
   const [addressOptions, setAddressOptions] = useState(
     user.addresses?.length ? user.addresses : [user.address],
@@ -1715,7 +1924,7 @@ function CheckoutScreen({
 
   const [addressModalError, setAddressModalError] = useState("")
 
-  const [payment, setPayment] = useState("Yape")
+  const [payment, setPayment] = useState("")
 
   const [paymentData, setPaymentData] = useState({
     phone: "",
@@ -1725,6 +1934,11 @@ function CheckoutScreen({
     expiry: "",
     cvv: "",
   })
+
+  const [cashDepositTicket, setCashDepositTicket] = useState<{
+    reference: string
+    expiresAt: string
+  } | null>(null)
 
   const [notes, setNotes] = useState("")
 
@@ -1741,6 +1955,13 @@ function CheckoutScreen({
   )
 
   const deliveryFee = district ? DISTRICT_FEES[district] : 0
+  const visiblePaymentMethods = Array.from(
+    new Set(
+      paymentMethods
+        .map(normalizePaymentMethod)
+        .filter((method) => !hiddenPaymentMethods.map(normalizePaymentMethod).includes(method)),
+    ),
+  )
 
   const updateAddress = (value: string) => {
     setAddress(value)
@@ -1783,6 +2004,11 @@ function CheckoutScreen({
   }
 
   const submit = () => {
+    if (!payment) {
+      setPaymentError("Selecciona un método de pago.")
+      return
+    }
+
     if (address.trim().length < 8) {
       setError("Ingresa una dirección válida para la entrega.")
       return
@@ -1794,19 +2020,19 @@ function CheckoutScreen({
     }
 
     if (
-      payment === "Yape" &&
+      (payment === "Yape" || payment === "Plin") &&
       (!/^9\d{8}$/.test(paymentData.phone.replace(/\s/g, "")) ||
         !/^\d{6}$/.test(paymentData.approvalCode))
     ) {
       setPaymentError(
-        "Ingresa un celular Yape válido y el código de aprobación de 6 dígitos.",
+        `Ingresa un celular ${payment} válido y el código de aprobación de 6 dígitos.`,
       )
 
       return
     }
 
     if (
-      payment === "Tarjeta al recibir" &&
+      payment === "Tarjeta de Debito o Credito" &&
       (!paymentData.cardName.trim() ||
         !/^\d{16}$/.test(paymentData.cardNumber.replace(/\s/g, "")) ||
         !/^\d{2}\/\d{2}$/.test(paymentData.expiry) ||
@@ -1819,7 +2045,19 @@ function CheckoutScreen({
 
     setPaymentError("")
 
-    onConfirm(address.trim(), district, deliveryFee, payment, notes.trim())
+    onConfirm(
+      address.trim(),
+      district,
+      deliveryFee,
+      payment,
+      notes.trim(),
+      payment === "deposito en efectivo"
+        ? cashDepositTicket?.reference
+        : undefined,
+      payment === "deposito en efectivo"
+        ? cashDepositTicket?.expiresAt
+        : undefined,
+    )
   }
 
   return (
@@ -1828,11 +2066,6 @@ function CheckoutScreen({
         eyebrow="Último paso"
         title="Confirma tu pedido"
         subtitle="Revisa la entrega y elige cómo pagar."
-        action={
-          <Button variant="ghost" icon="back" onClick={onBack}>
-            Volver al carrito
-          </Button>
-        }
       />
       <div className="checkout-layout">
         <section className="checkout-form">
@@ -1978,7 +2211,7 @@ function CheckoutScreen({
               </div>
             </div>
             <div className="payment-options">
-              {["Yape", "Tarjeta al recibir", "Efectivo"].map((method) => (
+              {visiblePaymentMethods.map((method) => (
                 <label
                   className={payment === method ? "payment active" : "payment"}
                   key={method}
@@ -1990,28 +2223,40 @@ function CheckoutScreen({
                     onChange={() => {
                       setPayment(method)
                       setPaymentError("")
+                      if (
+                        method === "deposito en efectivo" &&
+                        !cashDepositTicket
+                      ) {
+                        const expiresAt = new Date(
+                          Date.now() + 4 * 60 * 60 * 1000,
+                        ).toISOString()
+                        setCashDepositTicket({
+                          reference: `SE-${Date.now().toString().slice(-8)}`,
+                          expiresAt,
+                        })
+                      }
                     }}
                   />
                   <span className="radio" />
                   <span>
                     {method}
                     <small>
-                      {method === "Yape"
+                      {method === "Yape" || method === "Plin"
                         ? "Celular y código de aprobación"
-                        : method === "Efectivo"
-                          ? "Pago simulado contra entrega"
+                        : method === "deposito en efectivo"
+                          ? "Pago simulado mediante transferencia o depósito"
                           : "Datos de tarjeta simulados"}
                     </small>
                   </span>
                 </label>
               ))}
             </div>
-            {payment === "Yape" && (
+            {(payment === "Yape" || payment === "Plin") && (
               <div className="payment-details">
-                <p className="payment-step">Aprobación Yape</p>
+                <p className="payment-step">Aprobación {payment}</p>
                 <div className="form-grid">
                   <Field
-                    label="Celular afiliado a Yape"
+                    label={`Celular afiliado a ${payment}`}
                     inputMode="numeric"
                     placeholder="999 999 999"
                     value={paymentData.phone}
@@ -2034,11 +2279,11 @@ function CheckoutScreen({
                   />
                 </div>
                 <small className="payment-hint">
-                  Ingresa tu numero y tu codigo de aprobacion en yape.
+                  Ingresa tu número y tu código de aprobación en {payment.toLowerCase()}.
                 </small>
               </div>
             )}
-            {payment === "Tarjeta al recibir" && (
+            {payment === "Tarjeta de Debito o Credito" && (
               <div className="payment-details">
                 <p className="payment-step">Datos de tarjeta</p>
                 <Field
@@ -2104,13 +2349,24 @@ function CheckoutScreen({
                 </small>
               </div>
             )}
-            {payment === "Efectivo" && (
+            {payment === "deposito en efectivo" && (
               <div className="payment-details payment-cash">
                 <Icon name="info" size={18} />
-                <span>
-                  Tu pedido quedará registrado para pagar en efectivo al
-                  recibirlo.
-                </span>
+                <div>
+                  <p className="payment-step">Ticket de depósito en efectivo</p>
+                  <span>
+                    Usa este código en una plataforma o agente autorizado como
+                    PagoEfectivo, OXXO Pay o SafetyPay.
+                  </span>
+                  {cashDepositTicket && (
+                    <div className="payment-ticket">
+                      <strong>Referencia: {cashDepositTicket.reference}</strong>
+                      <small>
+                        Paga antes del {paymentDeadline(cashDepositTicket.expiresAt)}
+                      </small>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
             {paymentError && (
@@ -2169,7 +2425,14 @@ function CheckoutScreen({
             <strong>{money(subtotal + deliveryFee)}</strong>
           </div>
           <Button className="btn-full" onClick={submit}>
-            {payment === "Efectivo" ? "Generar orden" : "Generar orden"}
+            Generar orden
+          </Button>
+          <Button
+            className="btn-full btn-green"
+            icon="back"
+            onClick={onBack}
+          >
+            Modificar mi carrito
           </Button>
           <small className="safe-note">
             Al confirmar recibiras tu codigo de pedido.
@@ -2195,12 +2458,44 @@ function SuccessModal({
         <div className="success-mark">
           <Icon name="check" size={36} />
         </div>
-        <p className="eyebrow">Pedido confirmado</p>
+        <p className="eyebrow">Orden generada</p>
         <h2>¡Ya estamos cocinando!</h2>
         <p>
           Recibimos tu pedido <strong>{order.id}</strong>. Podrás seguir su
           avance en tiempo real.
         </p>
+        <div className="payment-confirmation">
+          <div className="modal-detail">
+            <span>
+              <Icon name="cart" />
+              Método de pago
+            </span>
+            <strong>{order.payment}</strong>
+          </div>
+          {order.payment === "deposito en efectivo" && (
+            <div className="payment-pending-message">
+              Tu pedido será confirmado al verificar el pago en efectivo.
+              {order.paymentReference && (
+                <small>Referencia: {order.paymentReference}</small>
+              )}
+              {order.paymentDeadline && (
+                <small>
+                  Paga antes del {paymentDeadline(order.paymentDeadline)}
+                </small>
+              )}
+            </div>
+          )}
+          <div className="payment-receipt-message">
+            <Icon name="check" size={16} />
+            <span>
+              Te enviaremos un comprobante de pago al correo{" "}
+              <strong>{order.email}</strong>{" "}
+              {order.payment === "deposito en efectivo"
+                ? "al finalizar y verificar el pago."
+                : "al finalizar el pago."}
+            </span>
+          </div>
+        </div>
         <div className="modal-detail">
           <span>
             <Icon name="clock" />
@@ -2220,11 +2515,13 @@ function SuccessModal({
 }
 
 function Tracker({ status }: { status: OrderStatus }) {
-  const active = STATUSES.indexOf(status)
+  const active = CUSTOMER_STATUSES.indexOf(
+    status === "Listo para delivery" ? "En camino" : status,
+  )
 
   return (
     <div className="tracker">
-      {STATUSES.map((item, index) => (
+      {CUSTOMER_STATUSES.map((item, index) => (
         <div
           className={index <= active ? "track-step active" : "track-step"}
           key={item}
@@ -2253,25 +2550,85 @@ function OrdersScreen({
 
   const active = mine.filter((order) => order.status !== "Entregado")
 
-  const history = mine.filter((order) => order.status === "Entregado")
+  const deliveredToday = mine.filter(
+    (order) => order.status === "Entregado" && isToday(order.createdAt),
+  )
+
+  const history = mine.filter(
+    (order) => order.status === "Entregado" && !isToday(order.createdAt),
+  )
+
+  const [showHistory, setShowHistory] = useState(false)
+
+  if (showHistory) {
+    return (
+      <main className="content narrow">
+        <PageHeader
+          eyebrow="Pedidos entregados"
+          title="Historial"
+          subtitle="Consulta todos tus pedidos que ya fueron entregados."
+          action={
+            <Button
+              variant="secondary"
+              icon="orders"
+              onClick={() => setShowHistory(false)}
+            >
+              Mis pedidos
+            </Button>
+          }
+        />
+        {history.length ? (
+          <section className="orders-section">
+            {history.map((order) => (
+              <article className="history-row" key={order.id}>
+                <div>
+                  <span className="status status-done">
+                    <Icon name="check" size={13} />
+                    Entregado
+                  </span>
+                  <h3>{order.id}</h3>
+                  <p>
+                    {shortDate(order.createdAt)} · Envío{" "}
+                    {money(orderDeliveryFee(order))} ·{" "}
+                    {order.items.map((item) => item.name).join(", ")}
+                  </p>
+                </div>
+                <strong>{money(order.total)}</strong>
+              </article>
+            ))}
+          </section>
+        ) : (
+          <EmptyState
+            icon="check"
+            title="Aún no tienes pedidos entregados"
+            text="Tus pedidos aparecerán aquí cuando completen la entrega."
+          />
+        )}
+      </main>
+    )
+  }
 
   return (
     <main className="content narrow">
       <PageHeader
         eyebrow="Seguimiento en vivo"
         title="Mis pedidos"
-        subtitle="Revisa el estado y el historial de tus pedidos."
+        subtitle="Consulta tus pedidos en curso y los entregados de hoy."
         action={
-          <Button variant="secondary" icon="utensils" onClick={onMenu}>
-            Ver menú
+          <Button
+            variant="secondary"
+            icon="orders"
+            onClick={() => setShowHistory(true)}
+          >
+            Historial
           </Button>
         }
       />
-      {!mine.length ? (
+      {!active.length && !deliveredToday.length ? (
         <EmptyState
           icon="orders"
-          title="Aún no tienes pedidos"
-          text="Cuando confirmes tu primer pedido, podrás seguirlo desde aquí."
+          title="No hay pedidos para mostrar"
+          text="Aquí aparecerán tus pedidos en curso y los entregados de hoy."
           action={<Button onClick={onMenu}>Hacer mi primer pedido</Button>}
         />
       ) : (
@@ -2293,11 +2650,16 @@ function OrdersScreen({
                     <div>
                       <span className="status status-active">
                         <i />
-                        {order.status}
+                        {order.status === "Listo para delivery"
+                          ? "Preparando"
+                          : order.status}
                       </span>
                       <h3>{order.id}</h3>
                       <p>
-                        Hoy, {shortTime(order.createdAt)} ·{" "}
+                        {isToday(order.createdAt)
+                          ? `Hoy, ${shortTime(order.createdAt)}`
+                          : shortDate(order.createdAt)}{" "}
+                        ·{" "}
                         {order.items.reduce(
                           (sum, item) => sum + item.quantity,
                           0,
@@ -2336,15 +2698,20 @@ function OrdersScreen({
               <div className="inline-empty">No tienes pedidos en curso.</div>
             )}
           </section>
-          {history.length > 0 && (
-            <section className="orders-section">
-              <div className="section-title">
-                <div>
-                  <h2>Historial</h2>
-                  <p>Tus pedidos anteriores</p>
-                </div>
+          <section className="orders-section">
+            <div className="section-title">
+              <div>
+                <h2>Entregados</h2>
+                <p>
+                  {deliveredToday.length}{" "}
+                  {deliveredToday.length === 1
+                    ? "pedido entregado hoy"
+                    : "pedidos entregados hoy"}
+                </p>
               </div>
-              {history.map((order) => (
+            </div>
+            {deliveredToday.length ? (
+              deliveredToday.map((order) => (
                 <article className="history-row" key={order.id}>
                   <div>
                     <span className="status status-done">
@@ -2353,16 +2720,20 @@ function OrdersScreen({
                     </span>
                     <h3>{order.id}</h3>
                     <p>
-                      {shortDate(order.createdAt)} · Envío{" "}
+                      Hoy, {shortTime(order.createdAt)} · Envío{" "}
                       {money(orderDeliveryFee(order))} ·{" "}
                       {order.items.map((item) => item.name).join(", ")}
                     </p>
                   </div>
                   <strong>{money(order.total)}</strong>
                 </article>
-              ))}
-            </section>
-          )}
+              ))
+            ) : (
+              <div className="inline-empty">
+                No tienes pedidos entregados hoy.
+              </div>
+            )}
+          </section>
         </>
       )}
     </main>
@@ -2405,7 +2776,12 @@ function AdminScreen({
   products: Product[]
   onManage: () => void
 }) {
-  const sales = orders.reduce((sum, order) => sum + order.total, 0)
+  const [selectedDate, setSelectedDate] = useState(localDateKey())
+  const filteredOrders = orders.filter((order) =>
+    matchesDate(order.createdAt, selectedDate),
+  )
+  const sales = filteredOrders.reduce((sum, order) => sum + order.total, 0)
+  const isCurrentDate = selectedDate === localDateKey()
 
   return (
     <main className="content">
@@ -2419,12 +2795,27 @@ function AdminScreen({
           </Button>
         }
       />
+      <div className="admin-filter">
+        <Field
+          label="Consultar fecha"
+          type="date"
+          value={selectedDate}
+          onChange={(event) => setSelectedDate(event.target.value)}
+        />
+        <span>
+          {isCurrentDate
+            ? "Mostrando los datos del día actual"
+            : `Mostrando los datos del ${new Intl.DateTimeFormat("es-PE", {
+                dateStyle: "long",
+              }).format(new Date(`${selectedDate}T12:00:00`))}`}
+        </span>
+      </div>
       <div className="stats-grid">
         <StatCard
           icon="orders"
-          label="Pedidos de hoy"
-          value={String(orders.length)}
-          note={`${orders.filter((o) => o.status !== "Entregado").length} aún en curso`}
+          label="Pedidos del día"
+          value={String(filteredOrders.length)}
+          note={`${filteredOrders.filter((o) => o.status !== "Entregado").length} aún en curso`}
         />
         <StatCard
           icon="grid"
@@ -2475,7 +2866,7 @@ function AdminScreen({
               </tr>
             </thead>
             <tbody>
-              {orders.map((order) => (
+              {filteredOrders.map((order) => (
                 <tr key={order.id}>
                   <td>
                     <strong>{order.id}</strong>
@@ -2525,27 +2916,30 @@ function AdminScreen({
   )
 }
 
-function OpsScreen({
+function KitchenScreen({
   orders,
   onAdvance,
 }: {
   orders: Order[]
   onAdvance: (id: string) => void
 }) {
-  const active = orders.filter((order) => order.status !== "Entregado")
+  const todayOrders = orders.filter((order) => isToday(order.createdAt))
+  const active = todayOrders.filter(
+    (order) => order.status === "Pendiente" || order.status === "Preparando",
+  )
 
   return (
     <main className="content">
       <PageHeader
-        eyebrow="Cocina & delivery"
-        title="Pedidos activos"
-        subtitle="Avanza cada pedido cuando complete la etapa actual."
+        eyebrow="Cocina"
+        title="Pedidos por preparar"
+        subtitle="Acepta y finaliza la preparación de cada pedido."
       />
       <div className="ops-summary">
-        {STATUSES.slice(0, 3).map((status) => (
+        {STATUSES.slice(0, 2).map((status) => (
           <span key={status}>
             <i className={`dot dot-${STATUSES.indexOf(status)}`} />
-            {orders.filter((o) => o.status === status).length} {status}
+            {todayOrders.filter((o) => o.status === status).length} {status}
           </span>
         ))}
       </div>
@@ -2574,18 +2968,9 @@ function OpsScreen({
                       min
                     </p>
                   </div>
-                  <strong>{money(order.total)}</strong>
                 </div>
                 <div className="ops-customer">
                   <strong>{order.customer}</strong>
-                  <span>
-                    <Icon name="pin" size={16} />
-                    {order.address}
-                  </span>
-                  <small>
-                    {order.district || detectDistrict(order.address)} · Envío{" "}
-                    {money(orderDeliveryFee(order))}
-                  </small>
                 </div>
                 <div className="ops-items">
                   {order.items.map((item) => (
@@ -2603,19 +2988,15 @@ function OpsScreen({
                 )}
                 <div className="ops-progress">
                   <div>
-                    <span style={{ width: `${((index + 1) / 4) * 100}%` }} />
+                    <span style={{ width: `${((index + 1) / 2) * 100}%` }} />
                   </div>
-                  <small>Paso {index + 1} de 4</small>
+                  <small>Paso {index + 1} de 2</small>
                 </div>
                 <Button
                   className="btn-full"
                   onClick={() => onAdvance(order.id)}
                 >
-                  {index === 0
-                    ? "Aceptar y preparar"
-                    : index === 1
-                      ? "Marcar en camino"
-                      : "Confirmar entrega"}{" "}
+                  {index === 0 ? "Aceptar y preparar" : "Finalizar preparación"}{" "}
                   <Icon name="arrow" size={17} />
                 </Button>
               </article>
@@ -2633,24 +3014,450 @@ function OpsScreen({
   )
 }
 
+function DeliveryScreen({
+  orders,
+  users,
+  onAdvance,
+}: {
+  orders: Order[]
+  users: User[]
+  onAdvance: (id: string) => void
+}) {
+  const todayOrders = orders.filter((order) => isToday(order.createdAt))
+  const visible = todayOrders.filter(
+    (order) =>
+      order.status === "Listo para delivery" ||
+      order.status === "En camino" ||
+      order.status === "Entregado",
+  )
+  return (
+    <main className="content">
+      <PageHeader
+        eyebrow="Delivery"
+        title="Pedidos para entregar"
+        subtitle="Recoge los pedidos preparados y actualiza su entrega."
+      />
+      <div className="ops-summary">
+        <span>
+          <i className="dot dot-3" />
+          {todayOrders.filter((order) => order.status === "En camino").length} En camino
+        </span>
+        <span>
+          <i className="dot dot-4" />
+          {todayOrders.filter((order) => order.status === "Entregado").length} Entregados
+        </span>
+      </div>
+      {visible.length ? (
+        <div className="ops-grid">
+          {visible.map((order) => {
+            const index = STATUSES.indexOf(order.status)
+            const isDelivered = order.status === "Entregado"
+            const customerPhone =
+              users.find((user) => user.email === order.email)?.phone ||
+              (order.email === demoClient.email ? demoClient.phone : "") ||
+              ""
+            return (
+              <article className="ops-card" key={order.id}>
+                <div className="ops-card-top">
+                  <div>
+                    <span className={`status status-${index}`}>
+                      {order.status}
+                    </span>
+                    <h2>{order.id}</h2>
+                    <p>
+                      <Icon name="clock" size={15} />
+                      Hace{" "}
+                      {Math.max(
+                        1,
+                        Math.round(
+                          (Date.now() - new Date(order.createdAt).getTime()) /
+                            60000,
+                        ),
+                      )}{" "}
+                      min
+                    </p>
+                  </div>
+                  <strong>{money(order.total)}</strong>
+                </div>
+                <div className="ops-customer">
+                  <strong>{order.customer}</strong>
+                  <span>
+                    <Icon name="phone" size={16} />
+                    {customerPhone ? (
+                      <a href={`tel:${customerPhone.replace(/\D/g, "")}`}>
+                        {customerPhone}
+                      </a>
+                    ) : (
+                      "Celular no registrado"
+                    )}
+                  </span>
+                  <span>
+                    <Icon name="pin" size={16} />
+                    {order.address}
+                  </span>
+                  <small>
+                    {order.district || detectDistrict(order.address)} · Envío{" "}
+                    {money(orderDeliveryFee(order))}
+                  </small>
+                </div>
+                <div className="ops-items">
+                  {order.items.map((item) => (
+                    <div key={item.name}>
+                      <b>{item.quantity}×</b>
+                      <span>{item.name}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="ops-progress">
+                  <div>
+                    <span
+                      style={{
+                        width:
+                          order.status === "Listo para delivery"
+                            ? "33%"
+                            : order.status === "En camino"
+                              ? "66%"
+                              : "100%",
+                      }}
+                    />
+                  </div>
+                  <small>{isDelivered ? "Entrega completada" : "Ruta de delivery"}</small>
+                </div>
+                {!isDelivered && (
+                  <Button
+                    className="btn-full"
+                    onClick={() => onAdvance(order.id)}
+                  >
+                    {order.status === "Listo para delivery"
+                      ? "Marcar en camino"
+                      : "Confirmar entrega"}{" "}
+                    <Icon name="arrow" size={17} />
+                  </Button>
+                )}
+              </article>
+            )
+          })}
+        </div>
+      ) : (
+        <EmptyState
+          icon="check"
+          title="Todo al día"
+          text="No hay pedidos preparados o entregados para mostrar."
+        />
+      )}
+    </main>
+  )
+}
+
+function CategoriesScreen({
+  categories,
+  products,
+  onChange,
+  onRename,
+  hiddenCategories,
+  onToggle,
+}: {
+  categories: string[]
+  products: Product[]
+  onChange: (categories: string[]) => void
+  onRename: (from: string, to: string) => void
+  hiddenCategories: string[]
+  onToggle: (category: string) => void
+}) {
+  const [name, setName] = useState("")
+  const [error, setError] = useState("")
+  const [editing, setEditing] = useState<string | null>(null)
+  const [editingName, setEditingName] = useState("")
+  const [query, setQuery] = useState("")
+  const [adding, setAdding] = useState(false)
+  const managed = categories.filter((category) => category !== "Todos")
+  const shown = managed.filter((category) =>
+    normalizeText(category).includes(normalizeText(query)),
+  )
+
+  const add = () => {
+    const value = name.trim()
+    if (!value) {
+      setError("Ingresa el nombre de la categoría.")
+      return
+    }
+    if (managed.some((category) => normalizeText(category) === normalizeText(value))) {
+      setError("La categoría ya existe.")
+      return
+    }
+    onChange([...categories, value])
+    setName("")
+    setError("")
+    setAdding(false)
+  }
+
+  const startEditing = (category: string) => {
+    setEditing(category)
+    setEditingName(category)
+    setError("")
+  }
+
+  const saveEdit = () => {
+    const value = editingName.trim()
+    if (!editing || !value) {
+      setError("Ingresa el nombre de la categoría.")
+      return
+    }
+    if (
+      managed.some(
+        (category) =>
+          category !== editing &&
+          normalizeText(category) === normalizeText(value),
+      )
+    ) {
+      setError("La categoría ya existe.")
+      return
+    }
+    onRename(editing, value)
+    setEditing(null)
+    setEditingName("")
+    setError("")
+  }
+
+  const toggleVisibility = (method: string) => {
+    if (
+      !hiddenMethods.includes(method) &&
+      methods.filter((item) => !hiddenMethods.includes(item)).length === 1
+    ) {
+      setError("Debe existir al menos un método de pago visible.")
+      return
+    }
+    onToggle(method)
+    setError("")
+  }
+
+  return (
+    <main className="content narrow">
+      <PageHeader
+        eyebrow="Administración"
+        title="Gestión de categorías"
+        subtitle="Organiza las categorías disponibles en el menú digital."
+        action={
+          <Button icon="plus" onClick={() => { setAdding(true); setError("") }}>
+            Agregar categoría
+          </Button>
+        }
+      />
+      {adding && (
+        <div className="form-card category-manager">
+          <div className="form-grid">
+            <Field label="Nueva categoría" value={name} onChange={(event) => setName(event.target.value)} placeholder="Ej. Combos" />
+            <div className="manage-actions">
+              <Button type="button" variant="ghost" className="btn-compact" onClick={() => setAdding(false)}>Cancelar</Button>
+              <Button type="button" className="btn-compact" onClick={add}>Guardar</Button>
+            </div>
+          </div>
+          {error && <div className="alert alert-error"><Icon name="info" size={18} /><span>{error}</span></div>}
+        </div>
+      )}
+      <div className="manage-toolbar">
+        <label className="search">
+          <Icon name="search" size={18} />
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar categoría..." />
+        </label>
+        <span>{managed.length} categorías configuradas</span>
+      </div>
+      <div className="manage-list">
+        {shown.map((category) => (
+          <article className="manage-item manage-item-simple" key={category}>
+            {editing === category ? (
+              <>
+                <Field
+                  label="Nombre de categoría"
+                  value={editingName}
+                  onChange={(event) => setEditingName(event.target.value)}
+                />
+                <div className="manage-actions">
+                  <Button type="button" variant="ghost" className="btn-compact" onClick={() => setEditing(null)}>Cancelar</Button>
+                  <Button type="button" className="btn-compact" onClick={saveEdit}>Guardar</Button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="manage-info">
+                  <span>Categoría</span>
+                  <h3>{category}</h3>
+                  <p>{products.filter((product) => product.category === category).length} productos asignados</p>
+                </div>
+                <div className="manage-actions">
+                  <Button variant="secondary" icon="edit" className="btn-compact" onClick={() => startEditing(category)}>Editar</Button>
+                  <Button
+                    variant="ghost"
+                    icon="eye"
+                    className="btn-compact"
+                    onClick={() => onToggle(category)}
+                  >
+                    {hiddenCategories.includes(category) ? "Mostrar" : "Ocultar"}
+                  </Button>
+                </div>
+              </>
+            )}
+          </article>
+        ))}
+      </div>
+    </main>
+  )
+}
+
+function PaymentMethodsScreen({
+  methods,
+  onChange,
+  onRename,
+  hiddenMethods,
+  onToggle,
+}: {
+  methods: string[]
+  onChange: (methods: string[]) => void
+  onRename: (from: string, to: string) => void
+  hiddenMethods: string[]
+  onToggle: (method: string) => void
+}) {
+  const [name, setName] = useState("")
+  const [error, setError] = useState("")
+  const [query, setQuery] = useState("")
+  const [adding, setAdding] = useState(false)
+  const shown = methods.filter((method) =>
+    normalizeText(method).includes(normalizeText(query)),
+  )
+
+  const add = () => {
+    const value = name.trim()
+    if (!value) {
+      setError("Ingresa el nombre del método de pago.")
+      return
+    }
+    if (methods.some((method) => normalizeText(method) === normalizeText(value))) {
+      setError("El método de pago ya existe.")
+      return
+    }
+    onChange([...methods, value])
+    setName("")
+    setError("")
+    setAdding(false)
+  }
+
+  const [editing, setEditing] = useState<string | null>(null)
+  const [editingName, setEditingName] = useState("")
+
+  const startEditing = (method: string) => {
+    setEditing(method)
+    setEditingName(method)
+    setError("")
+  }
+
+  const saveEdit = () => {
+    const value = editingName.trim()
+    if (!editing || !value) {
+      setError("Ingresa el nombre del método de pago.")
+      return
+    }
+    if (
+      methods.some(
+        (method) =>
+          method !== editing &&
+          normalizeText(method) === normalizeText(value),
+      )
+    ) {
+      setError("El método de pago ya existe.")
+      return
+    }
+    onRename(editing, value)
+    setEditing(null)
+    setEditingName("")
+    setError("")
+  }
+
+  return (
+    <main className="content narrow">
+      <PageHeader
+        eyebrow="Administración"
+        title="Gestión de métodos de pago"
+        subtitle="Configura las opciones que podrán seleccionar los clientes."
+        action={
+          <Button icon="plus" onClick={() => { setAdding(true); setError("") }}>
+            Agregar método
+          </Button>
+        }
+      />
+      {adding && (
+        <div className="form-card category-manager">
+          <div className="form-grid">
+            <Field label="Nuevo método de pago" value={name} onChange={(event) => setName(event.target.value)} placeholder="Ej. Plin" />
+            <div className="manage-actions">
+              <Button type="button" variant="ghost" className="btn-compact" onClick={() => setAdding(false)}>Cancelar</Button>
+              <Button type="button" className="btn-compact" onClick={add}>Guardar</Button>
+            </div>
+          </div>
+          {error && <div className="alert alert-error"><Icon name="info" size={18} /><span>{error}</span></div>}
+        </div>
+      )}
+      <div className="manage-toolbar">
+        <label className="search">
+          <Icon name="search" size={18} />
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar método..." />
+        </label>
+        <span>{methods.length} métodos configurados</span>
+      </div>
+      <div className="manage-list">
+        {shown.map((method) => (
+          <article className="manage-item manage-item-simple" key={method}>
+            {editing === method ? (
+              <>
+                <Field label="Nombre del método" value={editingName} onChange={(event) => setEditingName(event.target.value)} />
+                <div className="manage-actions">
+                  <Button type="button" variant="ghost" className="btn-compact" onClick={() => setEditing(null)}>Cancelar</Button>
+                  <Button type="button" className="btn-compact" onClick={saveEdit}>Guardar</Button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="manage-info">
+                  <span>Método disponible</span>
+                  <h3>{method}</h3>
+                  <p>{hiddenMethods.includes(method) ? "Oculto en el checkout" : "Visible en el checkout"}</p>
+                </div>
+                <div className="manage-actions">
+                  <Button variant="secondary" icon="edit" className="btn-compact" onClick={() => startEditing(method)}>Editar</Button>
+                  <Button variant="ghost" icon="eye" className="btn-compact" onClick={() => toggleVisibility(method)}>
+                    {hiddenMethods.includes(method) ? "Mostrar" : "Ocultar"}
+                  </Button>
+                </div>
+              </>
+            )}
+          </article>
+        ))}
+      </div>
+    </main>
+  )
+}
+
 function ManageScreen({
   products,
 
   onSave,
 
   onToggle,
+
+  categories,
 }: {
   products: Product[]
 
   onSave: (product: Product) => void
 
   onToggle: (id: number) => void
+
+  categories: string[]
 }) {
   const blank = {
     id: 0,
     name: "",
     description: "",
-    category: "Pizzas",
+    category: categories.find((category) => category !== "Todos") || "",
     price: 0,
     image: initialProducts[0].image,
     active: true,
@@ -2785,7 +3592,7 @@ function ManageScreen({
                 value={form.category}
                 onChange={(e) => setForm({ ...form, category: e.target.value })}
               >
-                {categories.slice(1).map((category) => (
+                {categories.filter((category) => category !== "Todos").map((category) => (
                   <option key={category}>{category}</option>
                 ))}
               </SelectField>
@@ -2847,6 +3654,40 @@ export default function App() {
     initialProducts,
   )
 
+  const [menuCategories, setMenuCategories] = useStoredState<string[]>(
+    "sabor-categories",
+    categories,
+  )
+
+  const [hiddenCategories, setHiddenCategories] = useStoredState<string[]>(
+    "sabor-hidden-categories",
+    [],
+  )
+
+  const [paymentMethods, setPaymentMethods] = useStoredState<string[]>(
+    "sabor-payment-methods",
+    initialPaymentMethods,
+  )
+
+  const [hiddenPaymentMethods, setHiddenPaymentMethods] = useStoredState<string[]>(
+    "sabor-hidden-payment-methods",
+    [],
+  )
+
+  useEffect(() => {
+    setPaymentMethods((current) => {
+      const migrated = current.map(normalizePaymentMethod)
+      return Array.from(new Set([...migrated, ...initialPaymentMethods]))
+    })
+    setHiddenPaymentMethods((current) =>
+      Array.from(
+        new Set(
+          current.map(normalizePaymentMethod),
+        ),
+      ),
+    )
+  }, [setHiddenPaymentMethods, setPaymentMethods])
+
   const [orders, setOrders] = useStoredState<Order[]>(
     "sabor-orders",
     initialOrders,
@@ -2866,7 +3707,9 @@ export default function App() {
         ? "admin"
         : session.role === "ops"
           ? "ops"
-          : "menu"
+          : session.role === "delivery"
+            ? "delivery"
+            : "menu"
       : "auth",
   )
 
@@ -2884,7 +3727,8 @@ export default function App() {
 
   const currentUser = useMemo(
     () =>
-      users.find((user) => user.email === session?.email) || {
+      users.find((user) => user.email === session?.email) ||
+      (session?.email === demoClient.email ? demoClient : null) || {
         name: session?.name || "",
 
         email: session?.email || "",
@@ -2900,7 +3744,7 @@ export default function App() {
     [session, users],
   )
 
-  const login = (email: string, password: string) => {
+  const login = async (email: string, password: string) => {
     if (email === "admin@saborexpress.pe" && password === "admin123") {
       setSession({ role: "admin", email, name: "Administrador" })
       setView("admin")
@@ -2913,28 +3757,50 @@ export default function App() {
       return null
     }
 
-    const user = users.find(
-      (item) => item.email === email && item.password === password,
+    if (email === "delivery@saborexpress.pe" && password === "delivery123") {
+      setSession({ role: "delivery", email, name: "Equipo de delivery" })
+      setView("delivery")
+      return null
+    }
+
+    if (email === demoClient.email && password === demoClient.password) {
+      setSession({ role: "client", email, name: demoClient.name })
+      setView("menu")
+      return null
+    }
+
+    const user = users.find((item) => item.email === email)
+    const passwordHash = await hashPassword(password)
+
+    if (
+      !user ||
+      (user.password.length === 64
+        ? user.password !== passwordHash
+        : user.password !== password)
     )
-
-    if (!user) return "Correo o contraseña incorrectos. Verifica tus datos."
+      return "Correo o contraseña incorrectos"
 
     setSession({ role: "client", email: user.email, name: user.name })
     setView("menu")
     return null
   }
 
-  const register = (user: User) => {
+  const register = async (user: User) => {
     if (users.some((item) => item.email === user.email))
-      return "Ya existe una cuenta con este correo."
+      return "El correo ya está registrado"
 
-    setUsers([...users, { ...user, addresses: [user.address] }])
-    setSession({ role: "client", email: user.email, name: user.name })
-    setView("menu")
+    setUsers([
+      ...users,
+      {
+        ...user,
+        password: await hashPassword(user.password),
+        addresses: [user.address],
+      },
+    ])
     return null
   }
 
-  const saveAccount = (user: User) => {
+  const saveAccount = async (user: User) => {
     if (
       users.some(
         (item) => item.email === user.email && item.email !== currentUser.email,
@@ -2942,14 +3808,35 @@ export default function App() {
     )
       return "Ya existe una cuenta con este correo."
 
+    const updatedUser = user.password.length === 64
+      ? user
+      : { ...user, password: await hashPassword(user.password) }
+
     setUsers(
-      users.map((item) => (item.email === currentUser.email ? user : item)),
+      users.map((item) =>
+        item.email === currentUser.email ? updatedUser : item,
+      ),
     )
 
     setSession((current) =>
       current ? { ...current, email: user.email, name: user.name } : current,
     )
 
+    return null
+  }
+
+  const recoverPassword = async (email: string, password: string) => {
+    if (password.length < 6) return "La nueva contraseña debe tener al menos 6 caracteres."
+    const user = users.find((item) => item.email === email)
+    if (!user) return "No existe una cuenta con ese correo."
+    const passwordHash = await hashPassword(password)
+    setUsers(
+      users.map((item) =>
+        item.email === email
+          ? { ...item, password: passwordHash }
+          : item,
+      ),
+    )
     return null
   }
 
@@ -2996,7 +3883,8 @@ export default function App() {
         ...orders.map((order) => Number(order.id.replace(/\D/g, ""))),
       ) + 1
 
-    const subtotal = cart.reduce(
+    const orderCart = cart.filter((item) => item.selected !== false)
+    const subtotal = orderCart.reduce(
       (sum, item) =>
         sum +
         (products.find((p) => p.id === item.productId)?.price || 0) *
@@ -3008,6 +3896,8 @@ export default function App() {
       id: `#ORD-${String(number).padStart(4, "0")}`,
 
       customer: currentUser.name,
+
+      phone: currentUser.phone,
 
       email: currentUser.email,
 
@@ -3023,11 +3913,15 @@ export default function App() {
 
       payment,
 
+      paymentReference,
+
+      paymentDeadline,
+
       status: "Pendiente",
 
       createdAt: new Date().toISOString(),
 
-      items: cart.map((item) => {
+      items: orderCart.map((item) => {
         const product = products.find((p) => p.id === item.productId)!
         return {
           name: product.name,
@@ -3044,17 +3938,33 @@ export default function App() {
     setConfirmed(order)
   }
 
-  const advance = (id: string) => {
+  const advanceKitchen = (id: string) => {
+    setOrders(
+      orders.map((order) => {
+        if (order.id !== id) return order
+        if (order.status === "Pendiente")
+          return { ...order, status: "Preparando" }
+        if (order.status === "Preparando")
+          return { ...order, status: "Listo para delivery" }
+        return order
+      }),
+    )
+
+    setToast("Estado actualizado correctamente")
+  }
+
+  const advanceDelivery = (id: string) => {
     setOrders(
       orders.map((order) => {
         if (order.id !== id) return order
 
-        const index = STATUSES.indexOf(order.status)
+        if (order.status === "Listo para delivery")
+          return { ...order, status: "En camino" }
 
-        return {
-          ...order,
-          status: STATUSES[Math.min(index + 1, STATUSES.length - 1)],
-        }
+        if (order.status === "En camino")
+          return { ...order, status: "Entregado" }
+
+        return order
       }),
     )
 
@@ -3083,7 +3993,14 @@ export default function App() {
 
   const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0)
 
-  if (!session) return <AuthScreen onLogin={login} onRegister={register} />
+  if (!session)
+    return (
+      <AuthScreen
+        onLogin={login}
+        onRegister={register}
+        onRecover={recoverPassword}
+      />
+    )
 
   return (
     <Shell
@@ -3095,7 +4012,13 @@ export default function App() {
       onLogout={logout}
     >
       {view === "menu" && (
-        <MenuScreen products={products} cart={cart} onQuantity={quantity} />
+        <MenuScreen
+          products={products}
+          cart={cart}
+          onQuantity={quantity}
+          categories={menuCategories}
+          hiddenCategories={hiddenCategories}
+        />
       )}
       {view === "cart" && (
         <CartScreen
@@ -3114,6 +4037,8 @@ export default function App() {
           onBack={() => setView("cart")}
           onConfirm={confirmOrder}
           onSaveAddresses={saveAddresses}
+          paymentMethods={paymentMethods}
+          hiddenPaymentMethods={hiddenPaymentMethods}
         />
       )}
       {view === "orders" && (
@@ -3133,10 +4058,20 @@ export default function App() {
           onManage={() => setView("manage")}
         />
       )}
-      {view === "ops" && <OpsScreen orders={orders} onAdvance={advance} />}
+      {view === "ops" && (
+        <KitchenScreen orders={orders} onAdvance={advanceKitchen} />
+      )}
+      {view === "delivery" && (
+        <DeliveryScreen
+          orders={orders}
+          users={users}
+          onAdvance={advanceDelivery}
+        />
+      )}
       {view === "manage" && (
         <ManageScreen
           products={products}
+          categories={menuCategories}
           onSave={saveProduct}
           onToggle={(id) => {
             setProducts(
@@ -3148,6 +4083,58 @@ export default function App() {
             )
             setToast("Visibilidad actualizada")
           }}
+        />
+      )}
+      {view === "categories" && (
+        <CategoriesScreen
+          categories={menuCategories}
+          products={products}
+          onChange={setMenuCategories}
+          hiddenCategories={hiddenCategories}
+          onToggle={(category) =>
+            setHiddenCategories((current) =>
+              current.includes(category)
+                ? current.filter((item) => item !== category)
+                : [...current, category],
+            )
+          }
+          onRename={(from, to) => {
+            setMenuCategories(
+              menuCategories.map((category) => (category === from ? to : category)),
+            )
+            setHiddenCategories(
+              hiddenCategories.map((category) => (category === from ? to : category)),
+            )
+            setProducts(
+              products.map((product) =>
+                product.category === from
+                  ? { ...product, category: to }
+                  : product,
+              ),
+            )
+          }}
+        />
+      )}
+      {view === "payments" && (
+        <PaymentMethodsScreen
+          methods={paymentMethods}
+          onChange={setPaymentMethods}
+          hiddenMethods={hiddenPaymentMethods}
+          onRename={(from, to) => {
+            setPaymentMethods(
+              paymentMethods.map((method) => (method === from ? to : method)),
+            )
+            setHiddenPaymentMethods(
+              hiddenPaymentMethods.map((method) => (method === from ? to : method)),
+            )
+          }}
+          onToggle={(method) =>
+            setHiddenPaymentMethods((current) =>
+              current.includes(method)
+                ? current.filter((item) => item !== method)
+                : [...current, method],
+            )
+          }
         />
       )}
       {confirmed && (
