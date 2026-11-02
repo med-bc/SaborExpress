@@ -32,6 +32,8 @@ type Product = {
 type CartItem = { productId: number; quantity: number; selected?: boolean }
 
 type User = {
+  id: string
+
   name: string
   email: string
   phone: string
@@ -43,6 +45,8 @@ type User = {
 
 type Order = {
   id: string
+
+  userId?: string
 
   customer: string
 
@@ -159,7 +163,14 @@ const normalizePaymentMethod = (method: string) => {
   return method
 }
 
+const createStableId = (prefix: string) =>
+  `${prefix}-${typeof crypto !== "undefined" && crypto.randomUUID
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`}`
+
 const demoClient: User = {
+  id: "client-demo",
+
   name: "Cliente Demo",
   email: "cliente@saborexpress.pe",
   phone: "999 888 777",
@@ -834,6 +845,8 @@ function AuthScreen({
       }
 
       const result = await onRegister({
+        id: "",
+
         name: `${form.name.trim()} ${form.lastName.trim()}`,
 
         email: form.email.toLowerCase().trim(),
@@ -2556,14 +2569,18 @@ function Tracker({ status }: { status: OrderStatus }) {
 
 function OrdersScreen({
   orders,
+  userId,
   email,
   onMenu,
 }: {
   orders: Order[]
+  userId: string
   email: string
   onMenu: () => void
 }) {
-  const mine = orders.filter((order) => order.email === email)
+  const mine = orders.filter(
+    (order) => order.userId === userId || (!order.userId && order.email === email),
+  )
 
   const active = mine.filter((order) => order.status !== "Entregado")
 
@@ -3710,8 +3727,6 @@ export default function App() {
     initialOrders,
   )
 
-  const [cart, setCart] = useStoredState<CartItem[]>("sabor-cart", [])
-
   const [session, setSession] = useStoredState<{
     role: Role
     email: string
@@ -3748,6 +3763,8 @@ export default function App() {
       (session?.email === demoClient.email ? demoClient : null) || {
         name: session?.name || "",
 
+        id: session?.email ? `session:${session.email}` : "anonymous",
+
         email: session?.email || "",
 
         phone: "",
@@ -3759,6 +3776,35 @@ export default function App() {
         addresses: [],
       },
     [session, users],
+  )
+
+  useEffect(() => {
+    const migratedUsers = users.map((user) =>
+      user.id ? user : { ...user, id: createStableId("user") },
+    )
+    if (migratedUsers.some((user, index) => user.id !== users[index].id)) {
+      setUsers(migratedUsers)
+    }
+
+    const ordersToMigrate = orders.some(
+      (order) =>
+        !order.userId &&
+        migratedUsers.some((user) => user.email === order.email),
+    )
+    if (ordersToMigrate) {
+      setOrders((current) =>
+        current.map((order) => {
+          if (order.userId) return order
+          const owner = migratedUsers.find((user) => user.email === order.email)
+          return owner ? { ...order, userId: owner.id } : order
+        }),
+      )
+    }
+  }, [orders, setOrders, setUsers, users])
+
+  const [cart, setCart] = useStoredState<CartItem[]>(
+    `sabor-cart:${currentUser.id}`,
+    [],
   )
 
   const login = async (email: string, password: string) => {
@@ -3810,6 +3856,7 @@ export default function App() {
       ...users,
       {
         ...user,
+        id: user.id || createStableId("user"),
         password: await hashPassword(user.password),
         addresses: [user.address],
       },
@@ -3913,6 +3960,8 @@ export default function App() {
 
     const order: Order = {
       id: `#ORD-${String(number).padStart(4, "0")}`,
+
+      userId: currentUser.id,
 
       customer: currentUser.name,
 
@@ -4063,6 +4112,7 @@ export default function App() {
       {view === "orders" && (
         <OrdersScreen
           orders={orders}
+          userId={currentUser.id}
           email={session.email}
           onMenu={() => setView("menu")}
         />
