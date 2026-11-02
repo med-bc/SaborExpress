@@ -124,6 +124,22 @@ const initialPaymentMethods = [
   "deposito en efectivo",
 ]
 
+const localImageByRemoteId: Record<string, string> = {
+  "1586511926434": "/images/pizza-brasa.jpg",
+  "1610440042657": "/images/burger-criolla.jpg",
+  "1543826173": "/images/lomo-saltado.jpg",
+  "1535399831218": "/images/ceviche-clasico.jpg",
+  "1630384060421": "/images/papas-nativas.jpg",
+  "1700459776134": "/images/pizza-pepperoni.jpg",
+  "1544145945": "/images/chicha-morada.jpg",
+  "1568600916869": "/images/tequenos-aji.jpg",
+}
+
+const localProductImage = (image: string) => {
+  const remoteId = image.match(/photo-(\d+)-/)?.[1]
+  return (remoteId && localImageByRemoteId[remoteId]) || image
+}
+
 const normalizePaymentMethod = (method: string) => {
   if (
     method === "Efectivo" ||
@@ -158,8 +174,7 @@ const initialProducts: Product[] = [
 
     price: 36.9,
 
-    image:
-      "https://images.unsplash.com/photo-1586511926434-91876a99354f?auto=format&fit=crop&w=900&q=85",
+    image: "/images/pizza-brasa.jpg",
 
     active: true,
 
@@ -177,8 +192,7 @@ const initialProducts: Product[] = [
 
     price: 24.9,
 
-    image:
-      "https://images.unsplash.com/photo-1610440042657-612c34d95e9f?auto=format&fit=crop&w=900&q=85",
+    image: "/images/burger-criolla.jpg",
 
     active: true,
 
@@ -196,8 +210,7 @@ const initialProducts: Product[] = [
 
     price: 32.9,
 
-    image:
-      "https://images.unsplash.com/photo-1543826173-cfe2ca17577d?auto=format&fit=crop&w=900&q=85",
+    image: "/images/lomo-saltado.jpg",
 
     active: true,
   },
@@ -213,8 +226,7 @@ const initialProducts: Product[] = [
 
     price: 34.9,
 
-    image:
-      "https://images.unsplash.com/photo-1535399831218-d5bd36d1a6b3?auto=format&fit=crop&w=900&q=85",
+    image: "/images/ceviche-clasico.jpg",
 
     active: true,
 
@@ -232,8 +244,7 @@ const initialProducts: Product[] = [
 
     price: 14.9,
 
-    image:
-      "https://images.unsplash.com/photo-1630384060421-cb20d0e0649d?auto=format&fit=crop&w=900&q=85",
+    image: "/images/papas-nativas.jpg",
 
     active: true,
   },
@@ -249,8 +260,7 @@ const initialProducts: Product[] = [
 
     price: 34.9,
 
-    image:
-      "https://images.unsplash.com/photo-1700459776134-eaa9303e6943?auto=format&fit=crop&w=900&q=85",
+    image: "/images/pizza-pepperoni.jpg",
 
     active: true,
   },
@@ -266,8 +276,7 @@ const initialProducts: Product[] = [
 
     price: 7.9,
 
-    image:
-      "https://images.unsplash.com/photo-1544145945-f90425340c7e?auto=format&fit=crop&w=900&q=85",
+    image: "/images/chicha-morada.jpg",
 
     active: true,
   },
@@ -283,8 +292,7 @@ const initialProducts: Product[] = [
 
     price: 16.9,
 
-    image:
-      "https://images.unsplash.com/photo-1568600916869-2ecedc31f41c?auto=format&fit=crop&w=900&q=85",
+    image: "/images/tequenos-aji.jpg",
 
     active: true,
   },
@@ -1636,7 +1644,7 @@ function MenuScreen({
         </div>
         <div className="hero-plate">
           <img
-            src={initialProducts[2].image}
+            src={localProductImage(initialProducts[2].image)}
             alt="Lomo saltado servido al momento"
           />
         </div>
@@ -1674,7 +1682,7 @@ function MenuScreen({
           {shown.map((product) => (
             <article className="product-card" key={product.id}>
               <div className="product-image">
-                <img src={product.image} alt={product.name} />
+                <img src={localProductImage(product.image)} alt={product.name} />
                 {product.popular && <span className="popular">Favorito</span>}
               </div>
               <div className="product-info">
@@ -1816,7 +1824,10 @@ function CartScreen({
                   />
                   <span />
                 </label>
-                <img src={item.product.image} alt={item.product.name} />
+                <img
+                  src={localProductImage(item.product.image)}
+                  alt={item.product.name}
+                />
                 <div className="cart-item-info">
                   <span>{item.product.category}</span>
                   <h3>{item.product.name}</h3>
@@ -3531,7 +3542,7 @@ function ManageScreen({
             className={product.active ? "manage-item" : "manage-item inactive"}
             key={product.id}
           >
-            <img src={product.image} alt={product.name} />
+            <img src={localProductImage(product.image)} alt={product.name} />
             <div className="manage-info">
               <span>{product.category}</span>
               <h3>{product.name}</h3>
