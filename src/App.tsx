@@ -3230,18 +3230,6 @@ function CategoriesScreen({
     setError("")
   }
 
-  const toggleVisibility = (method: string) => {
-    if (
-      !hiddenMethods.includes(method) &&
-      methods.filter((item) => !hiddenMethods.includes(item)).length === 1
-    ) {
-      setError("Debe existir al menos un método de pago visible.")
-      return
-    }
-    onToggle(method)
-    setError("")
-  }
-
   return (
     <main className="content narrow">
       <PageHeader
@@ -3380,6 +3368,18 @@ function PaymentMethodsScreen({
     onRename(editing, value)
     setEditing(null)
     setEditingName("")
+    setError("")
+  }
+
+  const toggleVisibility = (method: string) => {
+    if (
+      !hiddenMethods.includes(method) &&
+      methods.filter((item) => !hiddenMethods.includes(item)).length === 1
+    ) {
+      setError("Debe existir al menos un método de pago visible.")
+      return
+    }
+    onToggle(method)
     setError("")
   }
 
@@ -3887,6 +3887,8 @@ export default function App() {
     deliveryFee: number,
     payment: string,
     notes: string,
+    paymentReference?: string,
+    paymentDeadline?: string,
   ) => {
     const number =
       Math.max(
