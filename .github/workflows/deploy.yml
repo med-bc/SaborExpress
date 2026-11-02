@@ -22,6 +22,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          lfs: true
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -36,6 +38,10 @@ jobs:
         run: |
           echo "Contenido de public:"
           find public -type f
+          for image in public/images/*.jpg; do
+            file "$image"
+            test "$(head -c 2 "$image" | od -An -tx1 | tr -d ' \n')" = "ffd8"
+          done
 
       - name: Build project
         run: npm run build
