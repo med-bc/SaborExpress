@@ -135,10 +135,20 @@ const localImageByRemoteId: Record<string, string> = {
   "1568600916869": "/images/tequenos-aji.jpg",
 }
 
+
 const localProductImage = (image: string) => {
-  const remoteId = image.match(/photo-(\d+)-/)?.[1]
-  return (remoteId && localImageByRemoteId[remoteId]) || image
-}
+  const remoteId = image.match(/photo-(\d+)-/)?.[1];
+  const localImage = remoteId && localImageByRemoteId[remoteId];
+
+  const imagePath = localImage || image;
+
+  if (imagePath.startsWith("/")) {
+    return `${import.meta.env.BASE_URL}${imagePath.slice(1)}`;
+  }
+
+  return imagePath;
+};
+
 
 const normalizePaymentMethod = (method: string) => {
   if (
