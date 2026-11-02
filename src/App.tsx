@@ -135,20 +135,16 @@ const localImageByRemoteId: Record<string, string> = {
   "1568600916869": "/images/tequenos-aji.jpg",
 }
 
-
 const localProductImage = (image: string) => {
-  const remoteId = image.match(/photo-(\d+)-/)?.[1];
-  const localImage = remoteId && localImageByRemoteId[remoteId];
-
-  const imagePath = localImage || image;
+  const remoteId = image.match(/photo-(\d+)-/)?.[1]
+  const imagePath = (remoteId && localImageByRemoteId[remoteId]) || image
 
   if (imagePath.startsWith("/")) {
-    return `${import.meta.env.BASE_URL}${imagePath.slice(1)}`;
+    return `${import.meta.env.BASE_URL}${imagePath.slice(1)}`
   }
 
-  return imagePath;
-};
-
+  return imagePath
+}
 
 const normalizePaymentMethod = (method: string) => {
   if (
@@ -1692,9 +1688,7 @@ function MenuScreen({
           {shown.map((product) => (
             <article className="product-card" key={product.id}>
               <div className="product-image">
-                <img src={`${import.meta.env.BASE_URL}images/pizza-brasa.jpg`}
-                  alt="Prueba de pizza"
-                  style={{ width: "300px", height: "200px", objectFit: "cover" }}/>
+                <img src={localProductImage(product.image)} alt={product.name} />
                 {product.popular && <span className="popular">Favorito</span>}
               </div>
               <div className="product-info">
@@ -3242,18 +3236,6 @@ function CategoriesScreen({
     setError("")
   }
 
-  const toggleVisibility = (method: string) => {
-    if (
-      !hiddenMethods.includes(method) &&
-      methods.filter((item) => !hiddenMethods.includes(item)).length === 1
-    ) {
-      setError("Debe existir al menos un método de pago visible.")
-      return
-    }
-    onToggle(method)
-    setError("")
-  }
-
   return (
     <main className="content narrow">
       <PageHeader
@@ -3392,6 +3374,18 @@ function PaymentMethodsScreen({
     onRename(editing, value)
     setEditing(null)
     setEditingName("")
+    setError("")
+  }
+
+  const toggleVisibility = (method: string) => {
+    if (
+      !hiddenMethods.includes(method) &&
+      methods.filter((item) => !hiddenMethods.includes(item)).length === 1
+    ) {
+      setError("Debe existir al menos un método de pago visible.")
+      return
+    }
+    onToggle(method)
     setError("")
   }
 
@@ -3899,6 +3893,8 @@ export default function App() {
     deliveryFee: number,
     payment: string,
     notes: string,
+    paymentReference?: string,
+    paymentDeadline?: string,
   ) => {
     const number =
       Math.max(
