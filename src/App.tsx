@@ -838,6 +838,14 @@ function AuthScreen({
         return
       }
 
+      if (!detectDistrict(form.address)) {
+        setError(
+          "La dirección debe incluir uno de los distritos disponibles.",
+        )
+
+        return
+      }
+
       if (form.password !== form.confirm) {
         setError("Las contraseñas no coinciden.")
 
@@ -1103,8 +1111,10 @@ function AccountScreen({
 
   const addAddress = () => {
     const value = newAddress.trim()
-    if (value.length < 8) {
-      setAddressError("Ingresa una dirección válida.")
+    if (value.length < 8 || !detectDistrict(value)) {
+      setAddressError(
+        "Ingresa una dirección válida que incluya un distrito disponible.",
+      )
       return
     }
     setForm((current) => ({ ...current, addresses: [...current.addresses, value] }))
@@ -1136,6 +1146,13 @@ function AccountScreen({
 
     if (!addresses.length) {
       setError("Conserva al menos una dirección de entrega.")
+      return
+    }
+
+    if (addresses.some((address) => !detectDistrict(address))) {
+      setError(
+        "Cada dirección debe incluir uno de los distritos disponibles.",
+      )
       return
     }
 
@@ -1260,8 +1277,35 @@ function AccountScreen({
                       <em>Principal</em>
                     </label>
                   </div>
-                  <button type="button" className="icon-btn address-edit" aria-label={`Editar dirección ${index + 1}`} onClick={() => setEditingAddressIndex(index)}>
-                    <Icon name="edit" size={17} />
+                  <button
+                    type="button"
+                    className="icon-btn address-edit"
+                    aria-label={
+                      editingAddressIndex === index
+                        ? `Confirmar edición de dirección ${index + 1}`
+                        : `Editar dirección ${index + 1}`
+                    }
+                    onClick={() => {
+                      if (editingAddressIndex !== index) {
+                        setEditingAddressIndex(index)
+                        setError("")
+                        return
+                      }
+
+                      if (!detectDistrict(form.addresses[index])) {
+                        setError(
+                          "La dirección debe incluir uno de los distritos disponibles.",
+                        )
+                        return
+                      }
+
+                      setEditingAddressIndex(null)
+                    }}
+                  >
+                    <Icon
+                      name={editingAddressIndex === index ? "check" : "edit"}
+                      size={17}
+                    />
                   </button>
                   {form.addresses.length > 1 && (
                     <button
@@ -3857,6 +3901,10 @@ export default function App() {
     if (users.some((item) => item.email === user.email))
       return "El correo ya está registrado"
 
+    if (!detectDistrict(user.address)) {
+      return "La dirección debe incluir uno de los distritos disponibles."
+    }
+
     setUsers([
       ...users,
       {
@@ -3877,14 +3925,28 @@ export default function App() {
     )
       return "Ya existe una cuenta con este correo."
 
+    const phone = user.phone.replace(/\D/g, "")
+    if (
+      users.some(
+        (item) =>
+          item.email !== currentUser.email &&
+          item.phone.replace(/\D/g, "") === phone,
+      )
+    ) {
+      return "El número de celular ya está registrado por otro usuario."
+    }
+
     const updatedUser = user.password.length === 64
       ? user
       : { ...user, password: await hashPassword(user.password) }
 
+    const userExists = users.some((item) => item.email === currentUser.email)
     setUsers(
-      users.map((item) =>
-        item.email === currentUser.email ? updatedUser : item,
-      ),
+      userExists
+        ? users.map((item) =>
+            item.email === currentUser.email ? updatedUser : item,
+          )
+        : [...users, updatedUser],
     )
 
     setSession((current) =>
@@ -3910,10 +3972,13 @@ export default function App() {
   }
 
   const saveAddresses = (addresses: string[]) => {
+    const userExists = users.some((item) => item.email === currentUser.email)
     setUsers(
-      users.map((item) =>
-        item.email === currentUser.email ? { ...item, addresses } : item,
-      ),
+      userExists
+        ? users.map((item) =>
+            item.email === currentUser.email ? { ...item, addresses } : item,
+          )
+        : [...users, { ...currentUser, addresses }],
     )
   }
 
