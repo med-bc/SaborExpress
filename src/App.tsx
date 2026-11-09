@@ -1,6 +1,6 @@
 import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react"
 
-type Role = "client" | "admin" | "ops" | "delivery"
+type Role = "guest" | "client" | "admin" | "ops" | "delivery"
 
 type View = "auth" | "menu" | "cart" | "checkout" | "orders" | "account" | "admin" | "ops" | "delivery" | "manage" | "categories" | "payments"
 
@@ -787,12 +787,16 @@ function AuthScreen({
   onRegister,
 
   onRecover,
+
+  onContinueAsGuest,
 }: {
   onLogin: (email: string, password: string) => Promise<string | null>
 
   onRegister: (user: User) => Promise<string | null>
 
   onRecover: (email: string, password: string) => Promise<string | null>
+
+  onContinueAsGuest: () => void
 }) {
   const [tab, setTab] = useState<"login" | "register">("login")
 
@@ -1023,6 +1027,9 @@ function AuthScreen({
               </button>
             )}
           </form>
+          <Button type="button" variant="secondary" className="btn-full" onClick={onContinueAsGuest}>
+            Continuar como invitado
+          </Button>
           <div className="demo-note">
             <Icon name="info" size={18} />
             <div>
@@ -1434,6 +1441,8 @@ function Shell({
 
   onLogout,
 
+  onLogin,
+
   children,
 }: {
   role: Role
@@ -1447,6 +1456,8 @@ function Shell({
   onNavigate: (view: View) => void
 
   onLogout: () => void
+
+  onLogin: () => void
 
   children: ReactNode
 }) {
@@ -1468,7 +1479,9 @@ function Shell({
   ]
 
   const links =
-    role === "client"
+    role === "guest"
+      ? [{ view: "menu" as View, label: "Menú", icon: "utensils" }]
+      : role === "client"
       ? clientLinks
       : role === "admin"
         ? adminLinks
@@ -1499,7 +1512,7 @@ function Shell({
           className="logo-button"
           onClick={() =>
             go(
-              role === "client"
+              role === "guest" || role === "client"
                 ? "menu"
                 : role === "admin"
                   ? "admin"
@@ -1523,7 +1536,7 @@ function Shell({
           ))}
         </nav>
         <div className="top-actions">
-          {role === "client" && (
+          {(role === "client" || role === "guest") && (
             <button
               className="cart-button"
               onClick={() => go("cart")}
@@ -1533,30 +1546,38 @@ function Shell({
               {cartCount > 0 && <span>{cartCount}</span>}
             </button>
           )}
-          <div className="user-chip">
-            <span>
-              <Icon name="user" size={17} />
-            </span>
-            <div>
-              <strong>{userName.split(" ")[0]}</strong>
-              <small>
-                {role === "client"
-                  ? "Cliente"
-                  : role === "admin"
-                    ? "Administrador"
-                    : role === "delivery"
-                      ? "Delivery"
-                      : "Cocina"}
-              </small>
-            </div>
-          </div>
-          <button
-            className="icon-btn logout-button"
-            aria-label="Cerrar sesión"
-            onClick={onLogout}
-          >
-            <Icon name="logout" />
-          </button>
+          {role === "guest" ? (
+            <Button variant="secondary" className="btn-compact" onClick={onLogin}>
+              Iniciar sesión
+            </Button>
+          ) : (
+            <>
+              <div className="user-chip">
+                <span>
+                  <Icon name="user" size={17} />
+                </span>
+                <div>
+                  <strong>{userName.split(" ")[0]}</strong>
+                  <small>
+                    {role === "client"
+                      ? "Cliente"
+                      : role === "admin"
+                        ? "Administrador"
+                        : role === "delivery"
+                          ? "Delivery"
+                          : "Cocina"}
+                  </small>
+                </div>
+              </div>
+              <button
+                className="icon-btn logout-button"
+                aria-label="Cerrar sesión"
+                onClick={onLogout}
+              >
+                <Icon name="logout" />
+              </button>
+            </>
+          )}
         </div>
       </header>
       {mobileOpen && (
@@ -1569,23 +1590,29 @@ function Shell({
             <Icon name="close" />
           </button>
         </div>
-        <div className="drawer-user">
-          <div>
-            <Icon name="user" />
+        {role === "guest" ? (
+          <Button variant="secondary" className="btn-full" onClick={onLogin}>
+            Iniciar sesión
+          </Button>
+        ) : (
+          <div className="drawer-user">
+            <div>
+              <Icon name="user" />
+            </div>
+            <span>
+              <strong>{userName}</strong>
+              <small>
+                {role === "client"
+                  ? "Cliente"
+                  : role === "admin"
+                    ? "Administrador"
+                    : role === "delivery"
+                      ? "Personal de delivery"
+                      : "Personal de cocina"}
+              </small>
+            </span>
           </div>
-          <span>
-            <strong>{userName}</strong>
-            <small>
-              {role === "client"
-                ? "Cliente"
-                : role === "admin"
-                  ? "Administrador"
-                  : role === "delivery"
-                    ? "Personal de delivery"
-                    : "Personal de cocina"}
-            </small>
-          </span>
-        </div>
+        )}
         <nav>
           {links.map((link) => (
             <button
@@ -1597,17 +1624,19 @@ function Shell({
               {link.label}
             </button>
           ))}
-          {role === "client" && (
+          {(role === "client" || role === "guest") && (
             <button onClick={() => go("cart")}>
               <Icon name="cart" />
               Carrito <span className="nav-count">{cartCount}</span>
             </button>
           )}
         </nav>
-        <button className="drawer-logout" onClick={onLogout}>
-          <Icon name="logout" />
-          Cerrar sesión
-        </button>
+        {role !== "guest" && (
+          <button className="drawer-logout" onClick={onLogout}>
+            <Icon name="logout" />
+            Cerrar sesión
+          </button>
+        )}
       </aside>
       <div className="page-body">{children}</div>
     </div>
@@ -3791,8 +3820,10 @@ export default function App() {
           : session.role === "delivery"
             ? "delivery"
             : "menu"
-      : "auth",
+      : "menu",
   )
+
+  const [authReturnView, setAuthReturnView] = useState<View | null>(null)
 
   const [confirmed, setConfirmed] = useState<Order | null>(null)
 
@@ -3857,27 +3888,33 @@ export default function App() {
   )
 
   const login = async (email: string, password: string) => {
+    const continueTo = (defaultView: View) => {
+      const target = authReturnView || defaultView
+      setAuthReturnView(null)
+      setView(target)
+    }
+
     if (email === "admin@saborexpress.pe" && password === "admin123") {
       setSession({ role: "admin", email, name: "Administrador" })
-      setView("admin")
+      continueTo("admin")
       return null
     }
 
     if (email === "cocina@saborexpress.pe" && password === "cocina123") {
       setSession({ role: "ops", email, name: "Equipo de cocina" })
-      setView("ops")
+      continueTo("ops")
       return null
     }
 
     if (email === "delivery@saborexpress.pe" && password === "delivery123") {
       setSession({ role: "delivery", email, name: "Equipo de delivery" })
-      setView("delivery")
+      continueTo("delivery")
       return null
     }
 
     if (email === demoClient.email && password === demoClient.password) {
       setSession({ role: "client", email, name: demoClient.name })
-      setView("menu")
+      continueTo("menu")
       return null
     }
 
@@ -3893,7 +3930,7 @@ export default function App() {
       return "Correo o contraseña incorrectos"
 
     setSession({ role: "client", email: user.email, name: user.name })
-    setView("menu")
+    continueTo("menu")
     return null
   }
 
@@ -4125,29 +4162,48 @@ export default function App() {
 
   const logout = () => {
     setSession(null)
-    setView("auth")
+    setAuthReturnView(null)
+    setView("menu")
     setConfirmed(null)
+  }
+
+  const navigate = (target: View) => {
+    if (!session && (target === "checkout" || target === "orders" || target === "account")) {
+      setAuthReturnView(target === "checkout" ? "checkout" : "menu")
+      setView("auth")
+      return
+    }
+
+    setView(target)
   }
 
   const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0)
 
-  if (!session)
+  if (view === "auth" && !session)
     return (
       <AuthScreen
         onLogin={login}
         onRegister={register}
         onRecover={recoverPassword}
+        onContinueAsGuest={() => {
+          setAuthReturnView(null)
+          setView("menu")
+        }}
       />
     )
 
   return (
     <Shell
-      role={session.role}
-      userName={session.name}
+      role={session?.role || "guest"}
+      userName={session?.name || "Invitado"}
       view={view}
       cartCount={cartCount}
-      onNavigate={setView}
+      onNavigate={navigate}
       onLogout={logout}
+      onLogin={() => {
+        setAuthReturnView(null)
+        setView("auth")
+      }}
     >
       {view === "menu" && (
         <MenuScreen
@@ -4164,7 +4220,7 @@ export default function App() {
           cart={cart}
           onQuantity={quantity}
           onSelection={selection}
-          onNavigate={setView}
+          onNavigate={navigate}
         />
       )}
       {view === "checkout" && (
@@ -4179,7 +4235,7 @@ export default function App() {
           hiddenPaymentMethods={hiddenPaymentMethods}
         />
       )}
-      {view === "orders" && (
+      {view === "orders" && session && session.role === "client" && (
         <OrdersScreen
           orders={orders}
           userId={currentUser.id}
@@ -4187,7 +4243,7 @@ export default function App() {
           onMenu={() => setView("menu")}
         />
       )}
-      {view === "account" && session.role === "client" && (
+      {view === "account" && session && session.role === "client" && (
         <AccountScreen user={currentUser} onSave={saveAccount} />
       )}
       {view === "admin" && (
@@ -4281,11 +4337,11 @@ export default function App() {
           order={confirmed}
           onOrders={() => {
             setConfirmed(null)
-            setView("orders")
+            navigate("orders")
           }}
           onMenu={() => {
             setConfirmed(null)
-            setView("menu")
+            navigate("menu")
           }}
         />
       )}
